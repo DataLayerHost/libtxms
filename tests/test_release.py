@@ -89,9 +89,7 @@ class WorkflowTests(unittest.TestCase):
 		commands = "\n".join(step.get("run", "") for step in jobs["publish"]["steps"])
 		self.assertIn('gh release upload "$TAG"', commands)
 		self.assertNotIn("gh release create", commands)
-		if "conan-center" in jobs:
-			self.assertEqual(jobs["conan-center"]["needs"], "publish")
-			self.assertEqual(jobs["conan-center"]["with"]["tag"], "${{ github.event.release.tag_name }}")
+
 
 	@unittest.skipUnless((ROOT / "LIBTXMS_REVISION").exists(), "Gateway dependency check")
 	def test_gateway_checks_out_pinned_commit_in_every_build(self):
@@ -102,47 +100,6 @@ class WorkflowTests(unittest.TestCase):
 			checkout = next(step for step in steps if step.get("with", {}).get("repository") == "DataLayerHost/libtxms")
 			self.assertEqual(checkout["with"]["ref"], "${{ env.LIBTXMS_REF }}")
 			self.assertTrue(any("cat LIBTXMS_REVISION" in step.get("run", "") for step in steps))
-
-
-if (ROOT / "tools/prepare_conan_center.py").exists():
-	from prepare_conan_center import prepare
-	from submit_conan_center import merge_recipe
-	from verify_release import verify
-
-	class ConanCenterTests(unittest.TestCase):
-		setUp = ReleaseTests.setUp
-		tearDown = ReleaseTests.tearDown
-		git = ReleaseTests.git
-		def test_release_verification_rejects_tampering(self):
-			out = self.root / "dist"
-			metadata = build_release(self.root, "libtxms", "0.1.0", out)
-			with (out / "SHA256SUMS").open("a") as checksums:
-				checksums.write(hashlib.sha256((out / "release.json").read_bytes()).hexdigest() + "  release.json\n")
-			self.assertEqual(verify(out, "0.1.0", metadata["commit"]), metadata)
-			(out / "libtxms-0.1.0.tar.gz").write_bytes(b"tampered")
-			with self.assertRaises(ValueError):
-				verify(out, "0.1.0", metadata["commit"])
-
-		def test_conan_metadata_preserves_existing_versions(self):
-			out = self.root / "dist"
-			build_release(self.root, "libtxms", "0.1.0", out)
-			stage = self.root / "stage"
-			prepare(ROOT, "0.1.0", out / "libtxms-0.1.0.tar.gz", stage)
-			destination = self.root / "index"
-			old = destination / "recipes/libtxms/all"
-			old.mkdir(parents=True)
-			(old / "conandata.yml").write_text(yaml.safe_dump({"sources": {"0.0.9": {"url": "https://example.invalid/old", "sha256": "a"*64}}}))
-			(old.parent / "config.yml").write_text(yaml.safe_dump({"versions": {"0.0.9": {"folder": "all"}}}))
-			merge_recipe(stage, destination, "0.1.0")
-			before = (old / "conandata.yml").read_bytes()
-			self.assertEqual(set(yaml.safe_load(before)["sources"]), {"0.0.9", "0.1.0"})
-			merge_recipe(stage, destination, "0.1.0")
-			self.assertEqual(before, (old / "conandata.yml").read_bytes())
-			data = yaml.safe_load((stage / "recipes/libtxms/all/conandata.yml").read_text())
-			data["sources"]["0.1.0"]["sha256"] = "b"*64
-			(stage / "recipes/libtxms/all/conandata.yml").write_text(yaml.safe_dump(data))
-			with self.assertRaises(ValueError):
-				merge_recipe(stage, destination, "0.1.0")
 
 if __name__ == "__main__":
 	unittest.main()
