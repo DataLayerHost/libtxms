@@ -1,0 +1,8 @@
+prefix=${pcfiledir}/@TXMS_PC_PREFIX_RELATIVE@
+libdir=${prefix}/@CMAKE_INSTALL_LIBDIR@
+includedir=${prefix}/@CMAKE_INSTALL_INCLUDEDIR@
+Name: libtxms
+Description: TxMS transaction messaging codec
+Version: @PROJECT_VERSION@
+Libs: -L${libdir} -ltxms
+Cflags: -I${includedir}

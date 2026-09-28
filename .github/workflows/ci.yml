@@ -1,0 +1,78 @@
+name: C library CI
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+  workflow_call:
+permissions:
+  contents: read
+jobs:
+  build:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DTXMS_SANITIZE=ON -DCMAKE_C_COMPILER=clang
+      - run: cmake --build build -j2
+      - run: ctest --test-dir build --output-on-failure
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.2.0'
+      - uses: actions/checkout@v4
+        with:
+          repository: bchainhub/txms.js
+          ref: 53de2be00f10a9439781f90d6a92db418ef2fdef
+          path: reference-js
+      - run: npm install && npm test
+        working-directory: reference-js
+      - run: node tests/compatibility.mjs build/txms_oracle "$PWD/reference-js/dist/index.js"
+  flutter:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: bchainhub/flutter_txms
+          ref: 3a593f0c3021007ee21b74932d2d640bc6fff2a3
+          path: reference-dart
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+      - run: cmake -S . -B build && cmake --build build -j2
+      - run: flutter test
+        working-directory: reference-dart
+      - run: python3 tests/flutter_compatibility.py build/txms_oracle reference-dart
+  fuzz:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: cmake -S . -B build -DCMAKE_C_COMPILER=clang -DTXMS_SANITIZE=ON -DTXMS_FUZZ=ON
+      - run: cmake --build build -j2
+      - run: build/txms_fuzz tests/corpus -runs=20000 -max_len=2048
+  conan:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        shared: ['False', 'True']
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'conan>=2.12,<3'
+      - run: conan profile detect --force
+      - run: conan create . --build=missing --no-remote -o "libtxms/*:shared=${{ matrix.shared }}"
+  release-tooling:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install pyyaml
+      - run: python tests/test_release.py
