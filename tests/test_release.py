@@ -6,6 +6,7 @@ import sys
 import tarfile
 import tempfile
 import unittest
+import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "tools"))
@@ -22,6 +23,7 @@ class ReleaseTests(unittest.TestCase):
 		(self.root / "CMakeLists.txt").write_text("project(txms VERSION 0.1.0 LANGUAGES C)\n")
 		(self.root / "LICENSE").write_text("Test fixture license\n")
 		(self.root / "LIBTXMS_VERSION").write_text("0.1.0\n")
+		(self.root / "LIBTXMS_REVISION").write_text("a" * 40 + "\n")
 		self.git("add", ".")
 		self.git("commit", "-qm", "fixture")
 		self.git("tag", "0.1.0")
@@ -45,7 +47,8 @@ class ReleaseTests(unittest.TestCase):
 
 	def test_gateway_records_tested_dependency(self):
 		metadata = build_release(self.root, "kamailio-txms", "0.1.0", self.root / "dist")
-		self.assertEqual(metadata["libtxms_tag"], "0.1.0")
+		self.assertEqual(metadata["libtxms_version"], "0.1.0")
+		self.assertEqual(metadata["libtxms_commit"], "a" * 40)
 
 	def test_mismatched_or_unsafe_version_rejected(self):
 		self.git("tag", "0.2.0")
@@ -65,8 +68,43 @@ class ReleaseTests(unittest.TestCase):
 			build_release(self.root, "libtxms", "0.1.0", self.root / "dist")
 
 
+	def test_invalid_dependency_revision_rejected(self):
+		(self.root / "LIBTXMS_REVISION").write_text("main\n")
+		self.git("commit", "-qam", "invalid dependency revision")
+		self.git("tag", "-f", "0.1.0")
+		with self.assertRaises(ValueError):
+			build_release(self.root, "kamailio-txms", "0.1.0", self.root / "dist")
+
+
+class WorkflowTests(unittest.TestCase):
+	def test_published_release_uploads_only_after_tests(self):
+		workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+		# YAML 1.1 parses the Actions `on` key as True.
+		self.assertEqual(workflow[True], {"release": {"types": ["published"]}})
+		jobs = workflow["jobs"]
+		self.assertEqual(jobs["tests"]["uses"], "./.github/workflows/ci.yml")
+		self.assertEqual(jobs["assets"]["needs"], "tests")
+		self.assertEqual(set(jobs["publish"]["needs"]), {"tests", "assets"})
+		self.assertEqual(jobs["publish"]["env"]["TAG"], "${{ github.event.release.tag_name }}")
+		commands = "\n".join(step.get("run", "") for step in jobs["publish"]["steps"])
+		self.assertIn('gh release upload "$TAG"', commands)
+		self.assertNotIn("gh release create", commands)
+		if "conan-center" in jobs:
+			self.assertEqual(jobs["conan-center"]["needs"], "publish")
+			self.assertEqual(jobs["conan-center"]["with"]["tag"], "${{ github.event.release.tag_name }}")
+
+	@unittest.skipUnless((ROOT / "LIBTXMS_REVISION").exists(), "Gateway dependency check")
+	def test_gateway_checks_out_pinned_commit_in_every_build(self):
+		self.assertRegex((ROOT / "LIBTXMS_REVISION").read_text().strip(), r"^[0-9a-f]{40}$")
+		workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+		for name in ("core", "kamailio", "fuzz"):
+			steps = workflow["jobs"][name]["steps"]
+			checkout = next(step for step in steps if step.get("with", {}).get("repository") == "DataLayerHost/libtxms")
+			self.assertEqual(checkout["with"]["ref"], "${{ env.LIBTXMS_REF }}")
+			self.assertTrue(any("cat LIBTXMS_REVISION" in step.get("run", "") for step in steps))
+
+
 if (ROOT / "tools/prepare_conan_center.py").exists():
-	import yaml
 	from prepare_conan_center import prepare
 	from submit_conan_center import merge_recipe
 	from verify_release import verify

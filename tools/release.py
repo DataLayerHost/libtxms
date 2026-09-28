@@ -33,7 +33,11 @@ def build_release(root, project, tag, output):
 		dependency = git("show", f"{commit}:LIBTXMS_VERSION")
 		if not re.fullmatch(VERSION, dependency):
 			raise ValueError("Invalid LIBTXMS_VERSION")
-		metadata["libtxms_tag"] = dependency
+		revision = git("show", f"{commit}:LIBTXMS_REVISION")
+		if not re.fullmatch(r"[0-9a-f]{40}", revision):
+			raise ValueError("Invalid LIBTXMS_REVISION: expected a full commit SHA")
+		metadata["libtxms_version"] = dependency
+		metadata["libtxms_commit"] = revision
 	(output / "release.json").write_text(json.dumps(metadata, indent=2) + "\n")
 	(output / "SHA256SUMS").write_text(f"{digest}  {archive.name}\n")
 	return metadata
