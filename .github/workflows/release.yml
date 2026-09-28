@@ -1,0 +1,71 @@
+name: Release
+on:
+  release:
+    types: [published]
+permissions:
+  contents: read
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  tests:
+    if: ${{ !github.event.release.prerelease }}
+    uses: ./.github/workflows/ci.yml
+  assets:
+    needs: tests
+    runs-on: ubuntu-latest
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install 'conan>=2.12,<3'
+      - run: conan profile detect --force
+      - name: Verify version and archive the tested commit
+        run: python tools/release.py --project libtxms --tag "$TAG"
+      - name: Prepare and test the ConanCenter download recipe
+        run: |
+          version="${TAG}"
+          python tools/prepare_conan_center.py --version "$version" --archive "dist/libtxms-$version.tar.gz"
+          python tools/check_conan_center.py --version "$version" --archive "dist/libtxms-$version.tar.gz" --recipe release-stage/recipes/libtxms/all
+          tar -czf "dist/libtxms-$version-conan-center.tar.gz" -C release-stage LICENSE recipes
+      - name: Checksum all release assets
+        run: |
+          cd dist
+          sha256sum -- *.tar.gz release.json > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/*
+          if-no-files-found: error
+  publish:
+    needs: [tests, assets]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      TAG: ${{ github.event.release.tag_name }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist
+      - name: Verify downloaded assets
+        run: cd dist && sha256sum --check SHA256SUMS
+      - name: Attach tested assets to the published release
+        run: gh release upload "$TAG" dist/*
+  conan-center:
+    needs: publish
+    if: vars.CONAN_CENTER_FORK != ''
+    uses: ./.github/workflows/conan-center.yml
+    with:
+      tag: ${{ github.event.release.tag_name }}
+    secrets:
+      CONAN_CENTER_TOKEN: ${{ secrets.CONAN_CENTER_TOKEN }}
