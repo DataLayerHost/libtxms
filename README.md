@@ -88,17 +88,16 @@ conan install --requires=libtxms/0.1.0 --build=missing -g CMakeDeps -g CMakeTool
 Consumers use `find_package(txms CONFIG REQUIRED)` and link `txms::txms`.
 Conan packages include the CORE license and attribution. Packaging recipes and
 the standalone `test_package` are MIT licensed under [packaging/LICENSE](packaging/LICENSE);
-the library remains CORE licensed. `shared` and `fPIC` are supported. CI builds
-static/shared packages on Linux, macOS and Windows; Windows packaging checks
-run in hosted CI and have not been executed locally.
+the library remains CORE licensed. `shared` and `fPIC` are supported. The recipe is available for
+manual local use; Conan packaging tests do not run in CI.
 
 ## GitHub releases
 
 [release.yml](.github/workflows/release.yml) starts when a stable GitHub Release
 is **published**, using tags such as `0.1.0` without a `v` prefix. It calls the
 complete CI workflow at the tagged commit, including sanitizers, compatibility
-tests, fuzz checks and Conan consumer tests. The release is already visible while
-tests run; assets are attached only after all tests and package checks pass.
+tests and fuzz checks. The release is already visible while
+tests run; assets are attached only after all CI tests pass.
 
 1. Update `CMakeLists.txt`, commit the version/workflow changes and push them.
 2. Create and publish a GitHub Release for the matching tag, such as `0.1.0`,
